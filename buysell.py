@@ -7,12 +7,11 @@ Single-file, production-ready Telegram bot built on python-telegram-bot v20+
 using async/await syntax and Motor (async MongoDB driver) against MongoDB Atlas.
 
 Features:
+  - Professional Admin Desk UI (Action buttons attach directly under receipt photos)
   - Fetan USDT ETB Branding & Concise About Section (<512 chars)
-  - Zero/Ultra-Low Fee Deposit Routes: Binance UID, Bybit UID, BEP-20, Aptos
-  - Account Holder Name: Elilo Arja
-  - Telebirr: 0998947429 | CBE: 1000200873
-  - Admin Desk with Accept, Reject, Complete, and Request New Proof (Dispute Handling)
-  - Automated Two-Way Message & Screenshot Relay
+  - Deposit Routes: Binance UID, Bybit UID, BEP-20, Aptos
+  - Accounts: Telebirr (0998947429) & CBE (1000200873) - Elilo Arja
+  - Dispute handling & automated two-way relay
   - Support Handle: @FetanUSDTETB_SUPPORT
 """
 
@@ -78,13 +77,11 @@ if not MONGODB_URI:
 
 DEFAULT_RATE = float(os.getenv("USDT_ETB_RATE", "145.0"))
 
-# Updated Local Payment Details (BUY orders)
 ADMIN_PAYMENT_DETAILS = {
     "Telebirr": os.getenv("ADMIN_TELEBIRR", "0998947429 (Account Name: Elilo Arja)"),
-    "CBE": os.getenv("ADMIN_CBE", "1000200873673 (Account Name: Elilo Arja)"),
+    "CBE / CBE Birr": os.getenv("ADMIN_CBE", "1000200873 (Account Name: Elilo Arja)"),
 }
 
-# Updated Deposit Routes (SELL orders) - Strictly Binance, Bybit, BEP-20, Aptos
 ADMIN_WALLET_ADDRESSES = {
     "Binance Pay / UID": os.getenv("ADMIN_BINANCE_UID", "YourBinanceUIDHere (Name: FetanUSDTETB)"),
     "Bybit UID": os.getenv("ADMIN_BYBIT_UID", "YourBybitUIDHere (Name: FetanUSDTETB)"),
@@ -442,10 +439,13 @@ async def show_main_menu_callback(update: Update, context: ContextTypes.DEFAULT_
 
 async def safe_edit(message: Message, text: str, markup: InlineKeyboardMarkup) -> None:
     try:
-        await message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        if message.photo:
+            await message.edit_caption(caption=text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        else:
+            await message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
     except BadRequest as e:
         if "not modified" not in str(e).lower():
-            logger.warning("edit_text failed, sending new message instead: %s", e)
+            logger.warning("safe_edit failed, sending new message instead: %s", e)
             await message.reply_html(text, reply_markup=markup)
 
 # --------------------------------------------------------------------------- #
@@ -898,7 +898,7 @@ async def refresh_admin_card(context: ContextTypes.DEFAULT_TYPE, order_id: str) 
     trade_label = "🟢 BUY USDT" if order.trade_type == "BUY" else "🔴 SELL USDT"
     username_txt = f"@{esc(order.username)}" if order.username else "(no username)"
     lines = [
-        "📥 <b>OTC Order</b>",
+        "📥 <b>OTC Order Desk</b>",
         f"Order ID: <code>{order.order_id}</code>",
         f"Type: <b>{trade_label}</b>",
         f"Amount: <b>{fmt_usdt(order.usdt_amount)}</b> ≈ <b>{fmt_etb(order.etb_amount)}</b>",
@@ -917,16 +917,25 @@ async def refresh_admin_card(context: ContextTypes.DEFAULT_TYPE, order_id: str) 
 
     text = "\n".join(lines)
     try:
-        await context.bot.edit_message_text(
+        await context.bot.edit_message_caption(
             chat_id=ADMIN_CHAT_ID,
             message_id=order.admin_msg_id,
-            text=text,
+            caption=text,
             parse_mode=ParseMode.HTML,
             reply_markup=admin_action_keyboard(order.order_id, order.status),
         )
-    except BadRequest as e:
-        if "not modified" not in str(e).lower():
-            logger.warning("Failed to refresh admin card for %s: %s", order_id, e)
+    except BadRequest:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=ADMIN_CHAT_ID,
+                message_id=order.admin_msg_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=admin_action_keyboard(order.order_id, order.status),
+            )
+        except BadRequest as e:
+            if "not modified" not in str(e).lower():
+                logger.warning("Failed to refresh admin card for %s: %s", order_id, e)
 
 
 async def notify_user(context: ContextTypes.DEFAULT_TYPE, user_id: int, text: str) -> None:
@@ -1043,38 +1052,53 @@ async def user_message_relay(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     username_txt = f"@{esc(user.username)}" if user.username else "(no username)"
-    prefix = (
-        f"📨 <b>New User Reply/Proof</b> from {username_txt} (id: <code>{user.id}</code>)\n"
-        f"Order: <code>{order.order_id}</code> (Status: {STATUS_LABELS.get(order.status)})\n\n"
+    trade_label = "🟢 BUY USDT" if order.trade_type == "BUY" else "🔴 SELL USDT"
+
+    caption = (
+        f"📸 <b>NEW PAYMENT PROOF RECEIVED</b>\n"
+        f"Order ID: <code>{order.order_id}</code>\n"
+        f"Type: <b>{trade_label}</b> | Amount: <b>{fmt_usdt(order.usdt_amount)}</b>\n"
+        f"User: {username_txt} (id: <code>{user.id}</code>)\n"
+        f"Status: <b>{STATUS_LABELS.get(order.status, order.status)}</b>\n\n"
+        f"👇 <i>Use the action buttons below to process this trade.</i>"
     )
+
     try:
         if msg.photo:
-            caption = prefix + esc(msg.caption or "Payment receipt / screenshot uploaded")
-            await context.bot.send_photo(
+            # 💡 Attach action buttons directly under photo receipt for clean UI
+            admin_msg = await context.bot.send_photo(
                 chat_id=ADMIN_CHAT_ID,
                 photo=msg.photo[-1].file_id,
                 caption=caption,
                 parse_mode=ParseMode.HTML,
-                reply_to_message_id=order.admin_msg_id,
+                reply_markup=admin_action_keyboard(order.order_id, order.status),
             )
+            # Update database so buttons on receipt photo are tracked as active card
+            await db.set_admin_msg_id(order.order_id, admin_msg.message_id)
+
         elif msg.document:
-            caption = prefix + esc(msg.caption or "")
-            await context.bot.send_document(
+            admin_msg = await context.bot.send_document(
                 chat_id=ADMIN_CHAT_ID,
                 document=msg.document.file_id,
                 caption=caption,
                 parse_mode=ParseMode.HTML,
-                reply_to_message_id=order.admin_msg_id,
+                reply_markup=admin_action_keyboard(order.order_id, order.status),
             )
+            await db.set_admin_msg_id(order.order_id, admin_msg.message_id)
+
         elif msg.text:
+            text_payload = (
+                f"📨 <b>New User Reply</b> from {username_txt} (id: <code>{user.id}</code>)\n"
+                f"Order: <code>{order.order_id}</code>\n\n"
+                f"{esc(msg.text)}"
+            )
             await context.bot.send_message(
                 chat_id=ADMIN_CHAT_ID,
-                text=prefix + esc(msg.text),
+                text=text_payload,
                 parse_mode=ParseMode.HTML,
                 reply_to_message_id=order.admin_msg_id,
             )
-        else:
-            return
+
         await msg.reply_html("✅ Your message/receipt was forwarded to our OTC desk.")
     except TelegramError:
         logger.exception("Failed to relay user message for order %s", order.order_id)
