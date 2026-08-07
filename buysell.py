@@ -8,7 +8,7 @@ using async/await syntax and Motor (async MongoDB driver) against MongoDB Atlas.
 
 Features:
   - Fixed syntax error in Database layer
-  - Separate Buying Rate (180 ETB) and Selling Rate (199 ETB)
+  - Corrected Rates: Customer BUY = 199 ETB, Customer SELL = 180 ETB
   - Clean submission screen without cluttering main menu options
   - Vertical 4x1 Deposit Routes: Binance UID, Bybit UID, BEP-20, Aptos
   - Accounts: Telebirr (0998947429) & CBE (1000200873) - Elilo Arja
@@ -76,9 +76,9 @@ if not MONGODB_URI:
         "Get it from Atlas -> Database -> Connect -> Drivers (Python)."
     )
 
-# Configured Dynamic Rates
-DEFAULT_BUY_RATE = float(os.getenv("USDT_BUY_RATE", "180.0"))   # Rate when user BUYS USDT
-DEFAULT_SELL_RATE = float(os.getenv("USDT_SELL_RATE", "199.0")) # Rate when user SELLS USDT
+# Configured Rates based on trade context
+DEFAULT_BUY_RATE = float(os.getenv("USDT_BUY_RATE", "199.0"))   # Customer BUYS USDT at 199 ETB
+DEFAULT_SELL_RATE = float(os.getenv("USDT_SELL_RATE", "180.0")) # Customer SELLS USDT at 180 ETB
 
 ADMIN_PAYMENT_DETAILS = {
     "Telebirr": os.getenv("ADMIN_TELEBIRR", "0998947429 (Account Name: Elilo Arja)"),
@@ -1125,7 +1125,7 @@ async def set_rate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             f"Current Rates:\n"
             f"• 🟢 Buying Rate (Customer Buys): <b>1 USDT = {buy_rate:,.2f} ETB</b>\n"
             f"• 🔴 Selling Rate (Customer Sells): <b>1 USDT = {sell_rate:,.2f} ETB</b>\n\n"
-            f"Usage: <code>/setrate 180 199</code> (Buy_Rate Sell_Rate)"
+            f"Usage: <code>/setrate 199 180</code> (Buy_Rate Sell_Rate)"
         )
         return
     try:
@@ -1134,14 +1134,14 @@ async def set_rate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if new_buy <= 0 or new_sell <= 0:
             raise ValueError
     except ValueError:
-        await update.message.reply_html("⚠️ Usage: <code>/setrate 180 199</code>")
+        await update.message.reply_html("⚠️ Usage: <code>/setrate 199 180</code>")
         return
     await db.set_setting("usdt_buy_rate", str(new_buy))
     await db.set_setting("usdt_sell_rate", str(new_sell))
     await update.message.reply_html(
         f"✅ Rates updated:\n"
-        f"• Buying Rate: <b>1 USDT = {new_buy:,.2f} ETB</b>\n"
-        f"• Selling Rate: <b>1 USDT = {new_sell:,.2f} ETB</b>"
+        f"• Buying Rate (Customer Buys): <b>1 USDT = {new_buy:,.2f} ETB</b>\n"
+        f"• Selling Rate (Customer Sells): <b>1 USDT = {new_sell:,.2f} ETB</b>"
     )
 
 
