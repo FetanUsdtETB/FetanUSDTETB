@@ -8,9 +8,11 @@ using async/await syntax and Motor (async MongoDB driver) against MongoDB Atlas.
 
 Features:
   - Fetan USDT ETB Branding & Concise About Section (<512 chars)
-  - Zero/Ultra-Low Fee Crypto Deposit Routes ($0.00 – $0.10)
+  - Zero/Ultra-Low Fee Deposit Routes: Binance UID, Bybit UID, BEP-20, Aptos
+  - Account Holder Name: Elilo Arja
+  - Telebirr: 0998947429 | CBE: 1000200873
   - Admin Desk with Accept, Reject, Complete, and Request New Proof (Dispute Handling)
-  - Automated Two-Way Message & Screenshot Relay (Fixed double-response bug)
+  - Automated Two-Way Message & Screenshot Relay
   - Support Handle: @FetanUSDTETB_SUPPORT
 """
 
@@ -76,23 +78,18 @@ if not MONGODB_URI:
 
 DEFAULT_RATE = float(os.getenv("USDT_ETB_RATE", "145.0"))
 
+# Updated Local Payment Details (BUY orders)
 ADMIN_PAYMENT_DETAILS = {
-    "Telebirr": os.getenv("ADMIN_TELEBIRR", "0912345678 (Account Name: Fetan USDT ETB)"),
-    "CBE / CBE Birr": os.getenv("ADMIN_CBE", "1000123456789 (Account Name: Fetan USDT ETB)"),
-    "Other Local Bank": os.getenv(
-        "ADMIN_BANK", "Awash Bank - 013200123456 (Account Name: Fetan USDT ETB)"
-    ),
+    "Telebirr": os.getenv("ADMIN_TELEBIRR", "0998947429 (Account Name: Elilo Arja)"),
+    "CBE": os.getenv("ADMIN_CBE", "1000200873673 (Account Name: Elilo Arja)"),
 }
 
+# Updated Deposit Routes (SELL orders) - Strictly Binance, Bybit, BEP-20, Aptos
 ADMIN_WALLET_ADDRESSES = {
-    "Binance Pay / UID": os.getenv("ADMIN_BINANCE_UID", "123456789 (Name: Fetan_OTC)"),
-    "Bybit UID": os.getenv("ADMIN_BYBIT_UID", "987654321"),
-    "Aptos (APT)": os.getenv("ADMIN_WALLET_APTOS", "0xYourAptosAddressHere"),
-    "Solana (SOL)": os.getenv("ADMIN_WALLET_SOLANA", "YourSolanaAddressHere"),
-    "Polygon (POL)": os.getenv("ADMIN_WALLET_POLYGON", "0xYourPolygonAddressHere"),
-    "Arbitrum One": os.getenv("ADMIN_WALLET_ARBITRUM", "0xYourArbitrumAddressHere"),
-    "TON Network": os.getenv("ADMIN_WALLET_TON", "UQYourTonAddressHere"),
+    "Binance Pay / UID": os.getenv("ADMIN_BINANCE_UID", "YourBinanceUIDHere (Name: FetanUSDTETB)"),
+    "Bybit UID": os.getenv("ADMIN_BYBIT_UID", "YourBybitUIDHere (Name: FetanUSDTETB)"),
     "BEP-20 (BNB Chain)": os.getenv("ADMIN_WALLET_BEP20", "0xYourBEP20AddressHere"),
+    "Aptos (APT)": os.getenv("ADMIN_WALLET_APTOS", "0xYourAptosAddressHere"),
 }
 
 SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "@FetanUSDTETB_SUPPORT")
@@ -126,7 +123,7 @@ class State(IntEnum):
     CONFIRMING = 7
 
 
-PAYMENT_METHODS = ["Telebirr", "CBE / CBE Birr", "Other Local Bank"]
+PAYMENT_METHODS = ["Telebirr", "CBE / CBE Birr"]
 NETWORKS = list(ADMIN_WALLET_ADDRESSES.keys())
 
 STATUS_LABELS = {
@@ -204,10 +201,8 @@ def network_keyboard() -> InlineKeyboardMarkup:
     for i, nw in enumerate(NETWORKS):
         if "Binance" in nw or "Bybit" in nw:
             label = f"⚡ {nw} ($0.00)"
-        elif "Aptos" in nw or "Solana" in nw:
+        elif "Aptos" in nw:
             label = f"🟢 {nw} (<$0.01)"
-        elif "Polygon" in nw or "Arbitrum" in nw:
-            label = f"🟣 {nw} (~$0.02)"
         else:
             label = f"💎 {nw}"
         
@@ -405,7 +400,7 @@ class Database:
 
 
 db = Database(MONGODB_URI, MONGODB_DB_NAME)
-awaiting_admin_input: dict[int, dict] = {}  # {ADMIN_CHAT_ID: {"action": "reject"|"fix", "order_id": str}}
+awaiting_admin_input: dict[int, dict] = {}
 
 # --------------------------------------------------------------------------- #
 #  Guard & Menu Handlers
@@ -428,7 +423,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     text = (
         f"👋 <b>Welcome to {esc(BRAND_NAME)}</b>\n"
         "እንኳን ወደ Fetan USDT ETB ገበያ በደህና መጡ!\n\n"
-        "Trade USDT against Ethiopian Birr (ETB) safely via Telebirr, CBE, or bank transfer.\n"
+        "Trade USDT against Ethiopian Birr (ETB) safely via Telebirr or CBE.\n"
         "Please choose an option below to get started 👇"
     )
     if update.message:
@@ -536,7 +531,7 @@ async def payment_method_selected(update: Update, context: ContextTypes.DEFAULT_
     text = (
         f"✅ Payment method: <b>{esc(method)}</b>\n\n"
         "Step 4/6: Select deposit method / crypto network.\n"
-        "💡 <i>Tip: Binance/Bybit UIDs, Aptos, and SOL cost under $0.01 in fees!</i>\n"
+        "💡 <i>Tip: Binance and Bybit UIDs have zero transfer fees!</i>\n"
         "የቴክኖሎጂ አውታር (Network) ይምረጡ"
     )
     await safe_edit(query.message, text, network_keyboard())
@@ -562,7 +557,7 @@ async def network_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         text = (
             f"✅ Network: <b>{esc(network)}</b>\n\n"
             "Step 5/6: Please type your local receiving details "
-            "(Telebirr number / bank account number).\n"
+            "(Telebirr number / CBE account number).\n"
             "የቴሌብር ቁጥር ወይም የባንክ አካውንት ቁጥር ያስገቡ"
         )
     await safe_edit(query.message, text, InlineKeyboardMarkup([cancel_row()]))
@@ -739,8 +734,8 @@ async def show_about(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         "Fast, safe, and reliable <b>USDT ↔ ETB</b> exchange bot in Ethiopia.\n"
         "ፈጣን፣ አስተማማኝ እና ደህንነቱ የተጠበቀ የ USDT እና ብር መመንዘሪያ ቦት።\n\n"
         "⚡ <b>Features / ጥቅሞች:</b>\n"
-        "• Fast payouts via Telebirr, CBE & Local Banks\n"
-        "• Binance/Bybit UIDs, Aptos, SOL, Polygon & low-fee networks\n"
+        "• Fast payouts via Telebirr & CBE\n"
+        "• Binance/Bybit UIDs, BEP-20 & Aptos low-fee networks\n"
         "• Admin-verified security | ግልፅ ተመን\n\n"
         f"⏱ <b>Hours:</b> {esc(WORKING_HOURS)}\n"
         "🛡 <b>Notice:</b> Admins NEVER DM you first.\n\n"
@@ -832,7 +827,6 @@ async def admin_accept(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 @admin_only
 async def admin_request_fix(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Triggers prompt asking admin to explain what is wrong with user's receipt/proof."""
     query = update.callback_query
     order_id = query.data.split("adm_fix_", 1)[1]
     order = await db.get_order(order_id)
@@ -945,7 +939,6 @@ async def notify_user(context: ContextTypes.DEFAULT_TYPE, user_id: int, text: st
 
 
 async def admin_input_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Captures free-text input from Admin when rejecting or requesting proof fix."""
     task = awaiting_admin_input.get(ADMIN_CHAT_ID)
     if not task:
         return
@@ -1036,7 +1029,6 @@ async def user_message_relay(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if update.effective_chat.type != "private" or update.effective_chat.id == ADMIN_CHAT_ID:
         return
 
-    # Ignore messages if user is currently filling out an active conversation form
     if context.user_data and ("trade_type" in context.user_data or "amount_mode" in context.user_data):
         return
 
