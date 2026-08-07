@@ -1,3 +1,34 @@
+# Updated Config Dictionary (Line ~70)
+ADMIN_WALLET_ADDRESSES = {
+    "Binance UID": os.getenv("ADMIN_BINANCE_UID", "YourBinanceUIDHere (Name: FetanUSDTETB)"),
+    "Bybit UID": os.getenv("ADMIN_BYBIT_UID", "YourBybitUIDHere (Name: FetanUSDTETB)"),
+    "BEP-20 (BNB Chain)": os.getenv("ADMIN_WALLET_BEP20", "0xYourBEP20AddressHere"),
+    "Aptos (APT)": os.getenv("ADMIN_WALLET_APTOS", "0xYourAptosAddressHere"),
+}
+
+# Updated Keyboard Builder Function (Line ~165)
+def network_keyboard() -> InlineKeyboardMarkup:
+    rows = []
+    for i, nw in enumerate(NETWORKS):
+        if "Binance" in nw or "Bybit" in nw:
+            label = f"⚡ {nw} ($0.00)"
+        elif "Aptos" in nw:
+            label = f"🟢 {nw} (<$0.01)"
+        else:
+            label = f"💎 {nw}"
+        
+        # Each button is placed in its own individual row (1 column, 4 rows layout)
+        rows.append([InlineKeyboardButton(label, callback_data=f"net_{i}")])
+        
+    rows.append(cancel_row())
+    return InlineKeyboardMarkup(rows)
+```[cite: 1]
+
+---
+
+### Complete Updated `main.py` Code
+
+```python
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -9,7 +40,7 @@ using async/await syntax and Motor (async MongoDB driver) against MongoDB Atlas.
 Features:
   - Professional Admin Desk UI (Action buttons attach directly under receipt photos)
   - Fetan USDT ETB Branding & Concise About Section (<512 chars)
-  - Deposit Routes: Binance UID, Bybit UID, BEP-20, Aptos
+  - Vertical 4x1 Deposit Routes: Binance UID, Bybit UID, BEP-20, Aptos
   - Accounts: Telebirr (0998947429) & CBE (1000200873) - Elilo Arja
   - Dispute handling & automated two-way relay
   - Support Handle: @FetanUSDTETB_SUPPORT
@@ -83,7 +114,7 @@ ADMIN_PAYMENT_DETAILS = {
 }
 
 ADMIN_WALLET_ADDRESSES = {
-    "Binance Pay / UID": os.getenv("ADMIN_BINANCE_UID", "YourBinanceUIDHere (Name: FetanUSDTETB)"),
+    "Binance UID": os.getenv("ADMIN_BINANCE_UID", "YourBinanceUIDHere (Name: FetanUSDTETB)"),
     "Bybit UID": os.getenv("ADMIN_BYBIT_UID", "YourBybitUIDHere (Name: FetanUSDTETB)"),
     "BEP-20 (BNB Chain)": os.getenv("ADMIN_WALLET_BEP20", "0xYourBEP20AddressHere"),
     "Aptos (APT)": os.getenv("ADMIN_WALLET_APTOS", "0xYourAptosAddressHere"),
@@ -194,7 +225,6 @@ def payment_method_keyboard() -> InlineKeyboardMarkup:
 
 def network_keyboard() -> InlineKeyboardMarkup:
     rows = []
-    row = []
     for i, nw in enumerate(NETWORKS):
         if "Binance" in nw or "Bybit" in nw:
             label = f"⚡ {nw} ($0.00)"
@@ -203,12 +233,9 @@ def network_keyboard() -> InlineKeyboardMarkup:
         else:
             label = f"💎 {nw}"
         
-        row.append(InlineKeyboardButton(label, callback_data=f"net_{i}"))
-        if len(row) == 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
+        # Aligns buttons in a vertical single-column (4x1) layout
+        rows.append([InlineKeyboardButton(label, callback_data=f"net_{i}")])
+        
     rows.append(cancel_row())
     return InlineKeyboardMarkup(rows)
 
@@ -1065,7 +1092,7 @@ async def user_message_relay(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     try:
         if msg.photo:
-            # 💡 Attach action buttons directly under photo receipt for clean UI
+            # Action buttons attach directly under the receipt photo
             admin_msg = await context.bot.send_photo(
                 chat_id=ADMIN_CHAT_ID,
                 photo=msg.photo[-1].file_id,
@@ -1073,7 +1100,6 @@ async def user_message_relay(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 parse_mode=ParseMode.HTML,
                 reply_markup=admin_action_keyboard(order.order_id, order.status),
             )
-            # Update database so buttons on receipt photo are tracked as active card
             await db.set_admin_msg_id(order.order_id, admin_msg.message_id)
 
         elif msg.document:
