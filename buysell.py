@@ -86,9 +86,8 @@ DEFAULT_SELL_RATE = float(os.getenv("USDT_SELL_RATE", "180.0")) # Customer SELLS
 
 ADMIN_PAYMENT_DETAILS = {
     "Telebirr": os.getenv("ADMIN_TELEBIRR", "0998947429 (Account Name: Elilo Arja)"),
-    "CBE ": os.getenv("ADMIN_CBE", "1000200873673 (Account Name: Elilo Arja)"),
+    "CBE": os.getenv("ADMIN_CBE", "1000200873673 (Account Name: Elilo Arja)"),
 }
-
 ADMIN_WALLET_ADDRESSES = {
     "Binance UID": os.getenv("ADMIN_BINANCE_UID", "YourBinanceUIDHere (Name: FetanUSDTETB)"),
     "Bybit UID": os.getenv("ADMIN_BYBIT_UID", "YourBybitUIDHere (Name: FetanUSDTETB)"),
