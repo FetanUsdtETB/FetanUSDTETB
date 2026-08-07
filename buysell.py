@@ -343,7 +343,8 @@ class Database:
 
     async def create_order(self, data: dict) -> str:
         order_id = await self.generate_order_id()
-        now = datetime.utcnow().isoformat(timespec="seconds")
+        # FIX: using datetime.datetime.utcnow() to prevent AttributeError
+        now = datetime.datetime.utcnow().isoformat(timespec="seconds")
         doc = {
             "order_id": order_id,
             "user_id": data["user_id"],
@@ -377,7 +378,8 @@ class Database:
     async def update_status(
         self, order_id: str, status: str, reject_reason: Optional[str] = None
     ) -> None:
-        now = datetime.utcnow().isoformat(timespec="seconds")
+        # FIX: using datetime.datetime.utcnow()
+        now = datetime.datetime.utcnow().isoformat(timespec="seconds")
         update_fields = {"status": status, "updated_at": now}
         if reject_reason is not None:
             update_fields["reject_reason"] = reject_reason
@@ -656,8 +658,8 @@ async def confirm_submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     try:
         order_id = await db.create_order(order_data)
-    except Exception:
-        logger.exception("Failed to create order in database")
+    except Exception as e:
+        logger.exception(f"Failed to create order in database: {e}")
         await safe_edit(
             query.message,
             "❌ Something went wrong while saving your order. Please try again.",
@@ -1242,7 +1244,7 @@ def build_application() -> Application:
         .build()
     )
 
-    # Schedule the daily channel post at 9:00 AM EAT (which is 06:00 UTC)
+    # Schedule the daily channel post at 7:00 AM EAT (which is 04:00 UTC)
     if CHANNEL_ID:
         # Note: python-telegram-bot job_queue runs on UTC time by default
         run_time = datetime.time(hour=4, minute=00, tzinfo=datetime.timezone.utc)
