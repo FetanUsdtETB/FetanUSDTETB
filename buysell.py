@@ -6,10 +6,12 @@ Fetan USDT ETB - Ethiopian USDT Buy/Sell OTC Relay Bot
 Single-file, production-ready Telegram bot built on python-telegram-bot v20+
 using async/await syntax and Motor (async MongoDB driver) against MongoDB Atlas.
 
-Updated with:
+Features:
   - Fetan USDT ETB Branding & Concise About Section (<512 chars)
-  - Zero/Ultra-Low Fee Crypto Deposit Routes ($0.00 – $0.10): Binance Pay/UID,
-    Bybit UID, Aptos (APT), Solana (SOL), Polygon (POL), Arbitrum One, TON, BEP-20.
+  - Zero/Ultra-Low Fee Crypto Deposit Routes ($0.00 – $0.10)
+  - Admin Desk with Accept, Reject, Complete, and Request New Proof (Dispute Handling)
+  - Automated Two-Way Message & Screenshot Relay (Fixed double-response bug)
+  - Support Handle: @FetanUSDTETB_SUPPORT
 """
 
 from __future__ import annotations
@@ -74,7 +76,6 @@ if not MONGODB_URI:
 
 DEFAULT_RATE = float(os.getenv("USDT_ETB_RATE", "145.0"))
 
-# Admin receiving details for local currency (BUY orders)
 ADMIN_PAYMENT_DETAILS = {
     "Telebirr": os.getenv("ADMIN_TELEBIRR", "0912345678 (Account Name: Fetan USDT ETB)"),
     "CBE / CBE Birr": os.getenv("ADMIN_CBE", "1000123456789 (Account Name: Fetan USDT ETB)"),
@@ -83,7 +84,6 @@ ADMIN_PAYMENT_DETAILS = {
     ),
 }
 
-# Admin receiving crypto/UID addresses for SELL orders ($0.00 – $0.10 gas fee routes)
 ADMIN_WALLET_ADDRESSES = {
     "Binance Pay / UID": os.getenv("ADMIN_BINANCE_UID", "123456789 (Name: Fetan_OTC)"),
     "Bybit UID": os.getenv("ADMIN_BYBIT_UID", "987654321"),
@@ -95,7 +95,7 @@ ADMIN_WALLET_ADDRESSES = {
     "BEP-20 (BNB Chain)": os.getenv("ADMIN_WALLET_BEP20", "0xYourBEP20AddressHere"),
 }
 
-SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "@Fetan_USDT_Support")
+SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "@FetanUSDTETB_SUPPORT")
 BRAND_NAME = os.getenv("BRAND_NAME", "Fetan USDT ETB (ፈጣን USDT ETB)")
 WORKING_HOURS = os.getenv("WORKING_HOURS", "8:00 AM – 10:00 PM EAT")
 
@@ -113,7 +113,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger("otc_bot")
 
 # --------------------------------------------------------------------------- #
-#  Conversation states
+#  Conversation States & Statuses
 # --------------------------------------------------------------------------- #
 
 class State(IntEnum):
@@ -132,12 +132,13 @@ NETWORKS = list(ADMIN_WALLET_ADDRESSES.keys())
 STATUS_LABELS = {
     "PENDING": "🕓 Pending Review",
     "ACCEPTED": "✅ Accepted - Awaiting Payment",
+    "ACTION_REQUIRED": "⚠️ Action Required (Invalid/Missing Proof)",
     "REJECTED": "❌ Rejected",
     "COMPLETED": "🎉 Completed",
 }
 
 # --------------------------------------------------------------------------- #
-#  Utility helpers
+#  Utility Helpers
 # --------------------------------------------------------------------------- #
 
 def esc(text) -> str:
@@ -230,24 +231,23 @@ def confirm_keyboard() -> InlineKeyboardMarkup:
 
 
 def admin_action_keyboard(order_id: str, status: str) -> InlineKeyboardMarkup:
-    if status == "PENDING":
+    if status in ("PENDING", "ACCEPTED", "ACTION_REQUIRED"):
         return InlineKeyboardMarkup(
             [
                 [
-                    InlineKeyboardButton("✅ Accept Order", callback_data=f"adm_accept_{order_id}"),
+                    InlineKeyboardButton("✅ Accept", callback_data=f"adm_accept_{order_id}"),
+                    InlineKeyboardButton("🏁 Complete", callback_data=f"adm_complete_{order_id}"),
+                ],
+                [
+                    InlineKeyboardButton("⚠️ Request New Proof", callback_data=f"adm_fix_{order_id}"),
                     InlineKeyboardButton("❌ Reject Order", callback_data=f"adm_reject_{order_id}"),
-                ]
+                ],
             ]
-        )
-    if status == "ACCEPTED":
-        return InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🏁 Complete Trade", callback_data=f"adm_complete_{order_id}")]]
         )
     return InlineKeyboardMarkup([])
 
-
 # --------------------------------------------------------------------------- #
-#  Database layer
+#  Database Layer
 # --------------------------------------------------------------------------- #
 
 @dataclass
@@ -394,7 +394,7 @@ class Database:
 
     async def get_active_order_for_user(self, user_id: int) -> Optional[Order]:
         doc = await self._orders.find_one(
-            {"user_id": user_id, "status": {"$in": ["PENDING", "ACCEPTED"]}},
+            {"user_id": user_id, "status": {"$in": ["PENDING", "ACCEPTED", "ACTION_REQUIRED"]}},
             sort=[("_id", -1)],
         )
         return Order.from_doc(doc) if doc else None
@@ -405,7 +405,7 @@ class Database:
 
 
 db = Database(MONGODB_URI, MONGODB_DB_NAME)
-awaiting_reject_reason: dict[int, str] = {}
+awaiting_admin_input: dict[int, dict] = {}  # {ADMIN_CHAT_ID: {"action": "reject"|"fix", "order_id": str}}
 
 # --------------------------------------------------------------------------- #
 #  Guard & Menu Handlers
@@ -795,7 +795,7 @@ async def support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await safe_edit(query.message, text, main_menu_keyboard())
 
 # --------------------------------------------------------------------------- #
-#  Admin actions: Accept / Reject / Complete
+#  Admin Actions: Accept / Reject / Fix (Request New Proof) / Complete
 # --------------------------------------------------------------------------- #
 
 @admin_only
@@ -803,8 +803,8 @@ async def admin_accept(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     query = update.callback_query
     order_id = query.data.split("adm_accept_", 1)[1]
     order = await db.get_order(order_id)
-    if order is None or order.status != "PENDING":
-        await query.answer("Order not found or already processed.", show_alert=True)
+    if order is None:
+        await query.answer("Order not found.", show_alert=True)
         return
 
     await db.update_status(order_id, "ACCEPTED")
@@ -831,15 +831,35 @@ async def admin_accept(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 @admin_only
+async def admin_request_fix(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Triggers prompt asking admin to explain what is wrong with user's receipt/proof."""
+    query = update.callback_query
+    order_id = query.data.split("adm_fix_", 1)[1]
+    order = await db.get_order(order_id)
+    if order is None:
+        await query.answer("Order not found.", show_alert=True)
+        return
+
+    awaiting_admin_input[ADMIN_CHAT_ID] = {"action": "fix", "order_id": order_id}
+    await query.answer()
+    await context.bot.send_message(
+        chat_id=ADMIN_CHAT_ID,
+        text=f"⚠️ <b>Request New Proof for {order_id}</b>\n"
+             "Please type the issue (e.g., <i>Unreadable receipt, wrong amount sent, wrong account holder name</i>):",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@admin_only
 async def admin_reject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     order_id = query.data.split("adm_reject_", 1)[1]
     order = await db.get_order(order_id)
-    if order is None or order.status != "PENDING":
-        await query.answer("Order not found or already processed.", show_alert=True)
+    if order is None:
+        await query.answer("Order not found.", show_alert=True)
         return
 
-    awaiting_reject_reason[ADMIN_CHAT_ID] = order_id
+    awaiting_admin_input[ADMIN_CHAT_ID] = {"action": "reject", "order_id": order_id}
     await query.answer()
     await context.bot.send_message(
         chat_id=ADMIN_CHAT_ID,
@@ -853,8 +873,8 @@ async def admin_complete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     query = update.callback_query
     order_id = query.data.split("adm_complete_", 1)[1]
     order = await db.get_order(order_id)
-    if order is None or order.status != "ACCEPTED":
-        await query.answer("Order cannot be completed.", show_alert=True)
+    if order is None:
+        await query.answer("Order not found.", show_alert=True)
         return
 
     await db.update_status(order_id, "COMPLETED")
@@ -898,8 +918,8 @@ async def refresh_admin_card(context: ContextTypes.DEFAULT_TYPE, order_id: str) 
         lines.append(f"Account Holder Name: <b>{esc(order.account_name)}</b>")
     lines.append(f"\nUser: {username_txt} (id: <code>{order.user_id}</code>)")
     lines.append(f"Status: <b>{STATUS_LABELS.get(order.status, order.status)}</b>")
-    if order.status == "REJECTED" and order.reject_reason:
-        lines.append(f"Reason: <i>{esc(order.reject_reason)}</i>")
+    if order.reject_reason:
+        lines.append(f"Note / Reason: <i>{esc(order.reject_reason)}</i>")
 
     text = "\n".join(lines)
     try:
@@ -924,31 +944,50 @@ async def notify_user(context: ContextTypes.DEFAULT_TYPE, user_id: int, text: st
         logger.exception("Failed to notify user %s", user_id)
 
 
-async def admin_reason_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    order_id = awaiting_reject_reason.get(ADMIN_CHAT_ID)
-    if not order_id:
+async def admin_input_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Captures free-text input from Admin when rejecting or requesting proof fix."""
+    task = awaiting_admin_input.get(ADMIN_CHAT_ID)
+    if not task:
         return
-    reason = sanitize_input(update.message.text or "No reason provided.", max_len=300)
+
+    action = task.get("action")
+    order_id = task.get("order_id")
     order = await db.get_order(order_id)
-    if order is None or order.status != "PENDING":
-        awaiting_reject_reason.pop(ADMIN_CHAT_ID, None)
+    if not order:
+        awaiting_admin_input.pop(ADMIN_CHAT_ID, None)
         return
 
-    await db.update_status(order_id, "REJECTED", reject_reason=reason)
-    awaiting_reject_reason.pop(ADMIN_CHAT_ID, None)
-    await refresh_admin_card(context, order_id)
-    await update.message.reply_html(f"❌ Order <code>{order_id}</code> rejected.")
+    reason = sanitize_input(update.message.text or "No specific details provided.", max_len=300)
 
-    await notify_user(
-        context,
-        order.user_id,
-        f"❌ <b>Your order {order.order_id} was rejected.</b>\nReason: {esc(reason)}\n\n"
-        "You may submit a new order anytime with /start.",
-    )
+    if action == "reject":
+        await db.update_status(order_id, "REJECTED", reject_reason=reason)
+        awaiting_admin_input.pop(ADMIN_CHAT_ID, None)
+        await refresh_admin_card(context, order_id)
+        await update.message.reply_html(f"❌ Order <code>{order_id}</code> rejected.")
+        await notify_user(
+            context,
+            order.user_id,
+            f"❌ <b>Your order {order.order_id} was rejected.</b>\nReason: {esc(reason)}\n\n"
+            "You may submit a new order anytime with /start.",
+        )
+
+    elif action == "fix":
+        await db.update_status(order_id, "ACTION_REQUIRED", reject_reason=reason)
+        awaiting_admin_input.pop(ADMIN_CHAT_ID, None)
+        await refresh_admin_card(context, order_id)
+        await update.message.reply_html(f"⚠️ Action required notice sent to user for <code>{order_id}</code>.")
+        await notify_user(
+            context,
+            order.user_id,
+            f"⚠️ <b>Action Required for Order {order.order_id}</b>\n"
+            f"Issue: <i>{esc(reason)}</i>\n\n"
+            "Please send a new screenshot or reply with the correct transfer details directly in this chat.",
+        )
+
     raise ApplicationHandlerStop
 
 # --------------------------------------------------------------------------- #
-#  Two-way relay handlers
+#  Two-Way Relay Handlers
 # --------------------------------------------------------------------------- #
 
 @admin_only
@@ -997,6 +1036,10 @@ async def user_message_relay(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if update.effective_chat.type != "private" or update.effective_chat.id == ADMIN_CHAT_ID:
         return
 
+    # Ignore messages if user is currently filling out an active conversation form
+    if context.user_data and ("trade_type" in context.user_data or "amount_mode" in context.user_data):
+        return
+
     user = update.effective_user
     msg = update.message
     order = await db.get_active_order_for_user(user.id)
@@ -1009,12 +1052,12 @@ async def user_message_relay(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     username_txt = f"@{esc(user.username)}" if user.username else "(no username)"
     prefix = (
-        f"📨 <b>Message from user</b> {username_txt} (id: <code>{user.id}</code>)\n"
-        f"Order: <code>{order.order_id}</code>\n\n"
+        f"📨 <b>New User Reply/Proof</b> from {username_txt} (id: <code>{user.id}</code>)\n"
+        f"Order: <code>{order.order_id}</code> (Status: {STATUS_LABELS.get(order.status)})\n\n"
     )
     try:
         if msg.photo:
-            caption = prefix + esc(msg.caption or "Payment receipt / screenshot")
+            caption = prefix + esc(msg.caption or "Payment receipt / screenshot uploaded")
             await context.bot.send_photo(
                 chat_id=ADMIN_CHAT_ID,
                 photo=msg.photo[-1].file_id,
@@ -1040,12 +1083,12 @@ async def user_message_relay(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
         else:
             return
-        await msg.reply_html("✅ Your message was forwarded to our OTC desk.")
+        await msg.reply_html("✅ Your message/receipt was forwarded to our OTC desk.")
     except TelegramError:
         logger.exception("Failed to relay user message for order %s", order.order_id)
 
 # --------------------------------------------------------------------------- #
-#  Admin utility commands
+#  Admin Utility Commands
 # --------------------------------------------------------------------------- #
 
 @admin_only
@@ -1159,7 +1202,9 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(show_about, pattern=r"^about_us$"))
     application.add_handler(CallbackQueryHandler(support_callback, pattern=r"^menu_support$"))
 
+    # Admin Handlers
     application.add_handler(CallbackQueryHandler(admin_accept, pattern=r"^adm_accept_ORD-ET-\d+$"))
+    application.add_handler(CallbackQueryHandler(admin_request_fix, pattern=r"^adm_fix_ORD-ET-\d+$"))
     application.add_handler(CallbackQueryHandler(admin_reject, pattern=r"^adm_reject_ORD-ET-\d+$"))
     application.add_handler(CallbackQueryHandler(admin_complete, pattern=r"^adm_complete_ORD-ET-\d+$"))
 
@@ -1171,10 +1216,11 @@ def build_application() -> Application:
         group=0,
     )
     application.add_handler(
-        MessageHandler(filters.Chat(ADMIN_CHAT_ID) & filters.TEXT & ~filters.COMMAND, admin_reason_text),
+        MessageHandler(filters.Chat(ADMIN_CHAT_ID) & filters.TEXT & ~filters.COMMAND, admin_input_text),
         group=0,
     )
 
+    # User Relay
     application.add_handler(
         MessageHandler(
             filters.ChatType.PRIVATE & (filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND,
