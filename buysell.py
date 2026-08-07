@@ -126,7 +126,7 @@ class State(IntEnum):
     CONFIRMING = 7
 
 
-PAYMENT_METHODS = ["Telebirr", "CBE / CBE Birr"]
+PAYMENT_METHODS = ["Telebirr", "CBE"]
 NETWORKS = list(ADMIN_WALLET_ADDRESSES.keys())
 
 STATUS_LABELS = {
