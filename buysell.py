@@ -14,11 +14,13 @@ Features:
   - Accounts: Telebirr (0998947429) & CBE (1000200873) - Elilo Arja
   - Dispute handling & automated two-way relay
   - Support Handle: @FetanUSDTETB_SUPPORT
+  - Automated Daily Channel Post (Dynamically pulls current rates)
 """
 
 from __future__ import annotations
 
 import asyncio
+import datetime
 import html
 import logging
 import os
@@ -26,7 +28,6 @@ import random
 import re
 import string
 from dataclasses import dataclass
-from datetime import datetime
 from enum import IntEnum
 from typing import Optional
 
@@ -66,6 +67,9 @@ if not ADMIN_CHAT_ID_RAW or not re.fullmatch(r"-?\d+", ADMIN_CHAT_ID_RAW):
     raise RuntimeError("Environment variable ADMIN_CHAT_ID must be a numeric Telegram chat id.")
 
 ADMIN_CHAT_ID = int(ADMIN_CHAT_ID_RAW)
+
+# Channel ID for daily automated posts (e.g., @MyChannel or -100123456)
+CHANNEL_ID = os.getenv("CHANNEL_ID", "").strip()
 
 MONGODB_URI = os.getenv("MONGODB_URI", "").strip()
 MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "otc_ethiopia").strip()
@@ -1149,6 +1153,53 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.error("Unhandled exception: %s", update, exc_info=context.error)
 
 # --------------------------------------------------------------------------- #
+#  Automated Daily Channel Post Task
+# --------------------------------------------------------------------------- #
+
+async def post_daily_promo(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Scheduled task to post the current exchange rates to a Telegram channel."""
+    if not CHANNEL_ID:
+        return
+
+    buy_rate, sell_rate = await db.get_rates()
+    bot_username = context.bot.username or "FetanUSDTETB_bot"
+
+    text = f"""🎉 <b>Welcome to {esc(BRAND_NAME)}! | እንኳን ወደ {esc(BRAND_NAME)} በደህና መጡ!</b> 🎉
+
+Ethiopia’s fastest, safest, and most reliable automated OTC desk for buying and selling USDT is officially live! 
+አስተማማኝ እና ፈጣን የሆነው የUSDT መገበያያ ቦት አገልግሎት መስጠት ጀምሯል። 
+
+💱 <b>Current Exchange Rates / የዕለቱ ተመን:</b>
+🟢 Buy USDT (USDT ለመግዛት): 1 USDT = <b>{buy_rate:,.2f} ETB</b>
+🔴 Sell USDT (USDT ለመሸጥ): 1 USDT = <b>{sell_rate:,.2f} ETB</b>
+
+⚡️ <b>Why Choose Us? / ለምን እኛን ይመርጣሉ?</b>
+• <b>Local Payments:</b> Fast fiat transfers via Telebirr & CBE. 
+• <b>Zero/Low Fees:</b> Enjoy ZERO crypto fees using Binance UID & Bybit UID, or ultra-low fees on BEP-20 and Aptos networks!
+• <b>Secure & Automated:</b> Admin-verified trades ensure your funds are 100% safe. 
+
+🚀 <b>How to start? / እንዴት መጀመር ይቻላል?</b>
+Click the link below to open our bot and start trading instantly!
+
+👉 <b>Start Trading Now (ወደ ቦት ለመግባት):</b> @{bot_username}
+
+💬 <b>Need Help? (ለጥያቄ እና ድጋፍ):</b> {esc(SUPPORT_CONTACT)}
+
+<i>(⚠️ Security Notice: Our admins will NEVER message you first. Always use the official bot and support links.)</i>"""
+
+    try:
+        await context.bot.send_message(
+            chat_id=CHANNEL_ID,
+            text=text,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True
+        )
+        logger.info("Daily promo posted to channel %s", CHANNEL_ID)
+    except TelegramError as e:
+        logger.error("Failed to post daily promo to channel: %s", e)
+
+
+# --------------------------------------------------------------------------- #
 #  Keepalive HTTP Server & Application Bootstrap
 # --------------------------------------------------------------------------- #
 
@@ -1190,6 +1241,13 @@ def build_application() -> Application:
         .post_shutdown(post_shutdown)
         .build()
     )
+
+    # Schedule the daily channel post at 9:00 AM EAT (which is 06:00 UTC)
+    if CHANNEL_ID:
+        # Note: python-telegram-bot job_queue runs on UTC time by default
+        run_time = datetime.time(hour=6, minute=0, tzinfo=datetime.timezone.utc)
+        application.job_queue.run_daily(post_daily_promo, run_time)
+        logger.info(f"Daily promo task scheduled for channel {CHANNEL_ID} at 09:00 AM EAT.")
 
     order_conv = ConversationHandler(
         entry_points=[
