@@ -1247,7 +1247,7 @@ def build_application() -> Application:
         # Note: python-telegram-bot job_queue runs on UTC time by default
         run_time = datetime.time(hour=6, minute=0, tzinfo=datetime.timezone.utc)
         application.job_queue.run_daily(post_daily_promo, run_time)
-        logger.info(f"Daily promo task scheduled for channel {CHANNEL_ID} at 7:32 AM EAT.")
+        logger.info(f"Daily promo task scheduled for channel {CHANNEL_ID} at 10:35 AM EAT.")
 
     order_conv = ConversationHandler(
         entry_points=[
